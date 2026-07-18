@@ -1,0 +1,24 @@
+# reference/v1 — Ecumene's shipped hardening doctrine (the internal design spec).
+# The 14-point compose-hardening reference set. Each control is either
+# `static` (policy fully determines the emitted value) or `observation`
+# (policy declares intent; the convergence loop fills the concrete value,
+# then policy validates it). Absent an operator profile, Ecumene uses this
+# at `required` for every control — a control is never silently downgraded
+# to `off` without an explicit, recorded exception (fail-closed).
+name: reference
+version: v1
+controls:
+  no-new-privileges:      { status: required, kind: static }        # 1
+  cap-drop-all-min-add:   { status: required, kind: observation }   # 2
+  read-only-root-tmpfs:   { status: required, kind: observation }   # 3
+  no-privileged:          { status: required, kind: static }        # 4
+  no-docker-socket:       { status: required, kind: static }        # 5
+  minimal-ro-mounts:      { status: required, kind: observation }   # 6
+  secrets-by-reference:   { status: required, kind: static }        # 7
+  restart-unless-stopped: { status: required, kind: static }        # 8
+  lan-bound-ports:        { status: required, kind: static }        # 9
+  resource-limits:        { status: warn,     kind: observation }   # 10 (load-profiled; P3)
+  log-driver-limits:      { status: required, kind: static }        # 11
+  healthchecks:           { status: required, kind: static }        # 12
+  pin-image-digest:       { status: required, kind: static }        # 13
+  dedicated-bridge-net:   { status: required, kind: static }        # 14

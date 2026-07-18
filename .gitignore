@@ -1,0 +1,54 @@
+# Binaries
+/juridical
+/dist/
+/build/
+bin/
+
+# Compiled / native
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test & coverage artifacts
+*.out
+*.test
+coverage.txt
+coverage.html
+cover.out
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local runtime state
+/data/
+/config/
+*.local.yaml
+*.local.yml
+
+# Environment & secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*_rsa
+*.pat
+secrets/
+
+# Local PII denylist (external, never committed)
+.pii_denylist
+PII_DENYLIST
+
+# Release / signing scratch
+*.sbom.json
+*.sig
+*.pem.pub
