@@ -1,0 +1,33 @@
+# Pre-commit hooks for Juridical. Install once per clone:
+#   pip install pre-commit && pre-commit install
+# Manual full scan:
+#   pre-commit run --all-files
+#
+# Local hooks shell out to the pinned `make` targets so the Makefile stays the
+# single source of truth for tool invocation and versions.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt (make fmt)
+        entry: make fmt
+        language: system
+        pass_filenames: false
+        types: [go]
+      - id: go-vet
+        name: go vet (make vet)
+        entry: make vet
+        language: system
+        pass_filenames: false
+        types: [go]
+      - id: pii-scan
+        name: pii scan (no PII/host identifiers)
+        entry: tools/pii_scan.sh
+        language: system
+        pass_filenames: false
+        always_run: true

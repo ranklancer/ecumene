@@ -1,0 +1,11 @@
+# Gitleaks configuration - Juridical.
+# Commit-time + CI secret scanning using the upstream default ruleset.
+#
+# Policy: never weaken or delete a rule to silence a finding. Confirmed false
+# positives are suppressed by fingerprint in .gitleaksignore only. Real secrets
+# must be ROTATED, not allowlisted.
+
+title = "ecumene-gitleaks"
+
+[extend]
+useDefault = true

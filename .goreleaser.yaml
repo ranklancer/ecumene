@@ -1,0 +1,62 @@
+# GoReleaser config for Juridical.
+# Produces reproducible static binaries, a checksummed archive set, an SPDX
+# SBOM per artifact, and keyless cosign signatures. Provenance/SLSA attestation
+# is emitted by the release workflow's SLSA generator (see release.yml).
+version: 2
+
+project_name: ecumene
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: ecumene
+    main: ./cmd/ecumene
+    binary: ecumene
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/ranklancer/ecumene/internal/version.Version={{.Version}}
+      - -X github.com/ranklancer/ecumene/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/ranklancer/ecumene/internal/version.Date={{.Date}}
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+
+archives:
+  - id: ecumene
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+sboms:
+  - id: archive
+    artifacts: archive
+
+# Keyless (OIDC) cosign signatures over the checksum file and artifacts.
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--yes"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+    artifacts: checksum
+    output: true
+
+release:
+  draft: true
+  prerelease: auto
+
+changelog:
+  use: github
+  sort: asc
