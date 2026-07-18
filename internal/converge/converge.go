@@ -1,7 +1,7 @@
 // Package converge is Ecumene's convergence tightener (the internal design spec component A5): the
 // does-it-start loop (the internal design spec). It authors a candidate, launches it in the
 // sandbox, observes it, tightens to the minimal observed working set, and
-// re-verifies — under a bounded iteration budget. It NEVER loosens a control to
+// re-verifies -- under a bounded iteration budget. It NEVER loosens a control to
 // force a pass: if it cannot reach a healthy, doctrine-passing state within the
 // budget it fails CLOSED, emitting the last-good candidate plus the evidence of
 // what blocked convergence.
@@ -26,11 +26,11 @@ const (
 )
 
 // ErrDidNotStart means the image never launched, even after incorporating every
-// observed need — a fail-closed outcome, not a loosened pass.
+// observed need -- a fail-closed outcome, not a loosened pass.
 var ErrDidNotStart = errors.New("converge: image did not start within the budget (fail-closed)")
 
 // ErrDidNotConverge means the loop never reached a stable, healthy state within
-// the iteration budget — fail-closed.
+// the iteration budget -- fail-closed.
 var ErrDidNotConverge = errors.New("converge: did not reach a stable healthy state within the iteration budget (fail-closed)")
 
 // Loop is the configured convergence engine.
@@ -44,7 +44,7 @@ type Loop struct {
 }
 
 // Result is a convergence outcome. Compose/Evidence are always the last-good
-// candidate — populated even on a fail-closed error so the operator sees what
+// candidate -- populated even on a fail-closed error so the operator sees what
 // blocked convergence.
 type Result struct {
 	Compose    []byte
@@ -53,7 +53,7 @@ type Result struct {
 	Iterations int
 }
 
-// Converge runs the tighten↔re-verify loop for a single stateless image.
+// Converge runs the tighten<->re-verify loop for a single stateless image.
 func (l Loop) Converge(ctx context.Context, image string) (Result, error) {
 	maxIter := l.MaxIter
 	if maxIter <= 0 {
@@ -70,6 +70,14 @@ func (l Loop) Converge(ctx context.Context, image string) (Result, error) {
 
 	var caps, writes []string // the granted working set, grown from observation
 	var last Result
+	// lastVerified is the most recent candidate that completed a full
+	// start+observe cycle (Launcher.Launch and Tracer.Trace both succeeded)
+	// without an infrastructure error -- regardless of whether it was healthy
+	// or still needed further tightening. On a mid-loop infra error we must
+	// emit lastVerified, never `last`: `last`'s caps/tmpfs may have just been
+	// grown from the prior iteration's observation but never re-verified in a
+	// completed start+healthy cycle (PR#1 Opus review, fail-closed hardening).
+	var lastVerified Result
 
 	for i := 1; i <= maxIter; i++ {
 		obs := observe.Result{Caps: caps, WritePaths: writes}
@@ -87,13 +95,23 @@ func (l Loop) Converge(ctx context.Context, image string) (Result, error) {
 			Image: image, CapAdd: caps, ReadOnly: true, Tmpfs: writes, SoakWindow: soak,
 		})
 		if err != nil {
-			return last, err
+			// Infra error before this candidate ever launched: emit the last
+			// candidate that actually completed a verify cycle, not the
+			// un-re-verified `last`.
+			return lastVerified, err
 		}
 		res, terr := l.Tracer.Trace(ctx, h)
 		_ = l.Launcher.Stop(ctx, h)
 		if terr != nil {
-			return last, terr
+			// Infra error mid-trace: same rationale -- this candidate never
+			// completed a full start+observe cycle.
+			return lastVerified, terr
 		}
+
+		// This candidate completed a full start+observe cycle without an
+		// infra error: it becomes the last-verified candidate, whether or
+		// not it turned out healthy or still needs further tightening.
+		lastVerified = last
 
 		newCaps := union(caps, res.Caps)
 		newWrites := union(writes, res.WritePaths)
@@ -101,7 +119,7 @@ func (l Loop) Converge(ctx context.Context, image string) (Result, error) {
 
 		switch {
 		case res.Started && res.Healthy && !grew:
-			// stable: healthy with no new observed needs → converged.
+			// stable: healthy with no new observed needs -> converged.
 			last.Converged = true
 			return last, nil
 		case !grew:
