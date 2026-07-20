@@ -4,102 +4,43 @@ type: repo
 agent: CodeActAgent
 ---
 
-# Ecumene — repo agent (always loaded)
+# Ecumene — OpenHands repo agent
 
-You are operating inside **ecumene**, the observation-driven hardened-deployment
-generator — the **forge** in the suite:
-`forge (ecumene) → verify (bulwark) → act (juridical)`.
+## Read `AGENTS.md` first
 
-Ecumene runs a container image, watches what it actually needs, and tightens the
-deployment to the minimal working set — emitting a hardened Compose fragment
-plus the **evidence** for every retained privilege. It never loosens a control
-to force a pass: if it cannot reach a healthy, doctrine-passing state, it
-**fails closed**.
+The canonical agent instructions for this repository are in **`AGENTS.md` at the
+repo root**. Read it at the start of every task. It is the single source of
+truth for:
 
-> Status: **P0 founding scaffold.** Architecture + fail-closed convergence engine
-> are in place; the sandbox runtime and eBPF tracer land next. P0 scope: does-it-
-> start convergence on one stateless image, **Compose output only**.
+- what Ecumene is (observation-driven hardened-deployment generator; the
+  **forge** in forge → verify → act)
+- the engineered dev-loop and the **local-first worktree workflow**
+- the **full gate** that must pass (`make gate-full`, mirrored by `ci.yml`)
+- PR & branch discipline
+- the security doctrine (fail-closed convergence, Rego/OPA doctrine profile,
+  evidence for every retained privilege)
+- repo structure, the internal design spec component map, and build/test commands
 
-## Your role in the loop
+Everything below is **OpenHands-lane specific only**. Shared conventions are not
+repeated here — if this file and `AGENTS.md` ever disagree, `AGENTS.md` wins.
 
-OpenHands is the **routine-tier producer only** — author a focused change and
-open a PR. You do not review and do not merge. The engineered dev-loop:
+## OpenHands-specific
 
-`pull → plan → build → FULL GATE → document → open PR → independent adversarial review → auto-merge on clean`
-
-You own `pull → … → open PR`; the independent review-loop owns the rest.
-
-## PR & branch discipline
-
-- Branch from the default branch; prefix work branches `openhands/…`.
-- **Never** push to the default branch (`main`). **Never** self-merge — the
-  PR-only credential enforces this; do not try to bypass it.
-- One logical change per PR; every PR enters the independent review-loop.
-  Conventional Commits.
-
-## The full gate — MUST pass before you call anything done
-
-`make gate-full` is the **single source of truth**; `ci.yml` runs the identical
-target so local and CI stay in lockstep. Do not mark work done without proof.
-
-`gate-full: fmt vet build test cover lint gosec gitleaks pii smoke`
-
-- `fmt` — `go fmt` + `gofmt -l` check over `cmd internal` (fails on drift).
-- `vet` — `go vet ./...`.
-- `build` — `CGO_ENABLED=0 go build -trimpath` → `./ecumene`.
-- `test` — `go test -race -count=1 ./...`.
-- `cover` — total-coverage floor `COVER_FLOOR=74` (atomic profile).
-- `lint` — `golangci-lint run` (required in CI).
-- `gosec` — `gosec -quiet ./...` (required in CI).
-- `gitleaks` — `gitleaks detect --redact --exit-code 1` (required in CI).
-- `pii` — `./tools/pii_scan.sh` (no host IPs, real emails, or domains).
-- `smoke` — build + `./ecumene -version` + `./ecumene doctrine` +
-  `./ecumene forge nginx@sha256:<digest>`.
-- **Fuzz:** no targets in the scaffold yet. Add `FuzzXxx` targets over
-  untrusted-input parsers as they land (the internal design spec); keep them advisory (seed
-  corpus runs under `make test`), not a blocking `gate-full` dependency.
-- **Release/CI:** reproducible GoReleaser build + CycloneDX SBOM + keyless
-  cosign; OpenSSF Scorecard + SLSA provenance staged in CI.
-
-## Security doctrine (design constraint, not a phase)
-
-- **Fail-closed is the product.** Observation-derived controls (capabilities,
-  tmpfs, …) are held at their fail-closed **defaults** until the sandbox
-  runtime + tracer (D-5) tighten them to *observed* use. Never downgrade a
-  control to force convergence.
-- **Doctrine, enforced.** The substrate is **Rego/OPA**; authors interact via a
-  YAML doctrine profile (`internal/doctrine/reference-v1.yaml`) — YAML
-  ergonomics on top, OPA rigor underneath, sharing a policy language with
-  bulwark's compose-policy-gate. The shipped `reference/v1` is the 14-point
-  compose-hardening doctrine; absent an operator profile every control is
-  `required` and can never be silently downgraded to `off`.
-- **Evidence for every retained privilege** — emit the justification, not just
-  the result.
-- **Least privilege. Zero-leak. Root cause, not band-aid. Minimal surface.**
-  Never commit or echo a secret (refer by shape/fingerprint). Public-repo
-  hygiene: no host IPs, no secrets, no PII in code, fixtures, or docs — use
-  RFC-5737 / RFC-1918, `example.com`, `noreply@…`.
-
-## Repo context
-
-- **Language:** Go 1.22, module `github.com/ranklancer/ecumene`. Single static
-  binary, `CGO_ENABLED=0` (the design notes). Minimal deps (`gopkg.in/yaml.v3`).
-- **Commands:** `ecumene forge <image>` (author hardened Compose fragment +
-  evidence), `ecumene doctrine` (print the shipped reference/v1 doctrine),
-  `ecumene version`.
-- **Directories / components:** `cmd/ecumene`; `internal/doctrine` (A1 policy
-  engine, profile load/validate + Rego seam), `internal/emit` (A2
-  generator/emitter, Compose-only in P0), `internal/sandbox` (A3 launcher —
-  runtime deferred), `internal/observe` (A4 tracer — eBPF at D-5),
-  `internal/converge` (A5 tighten↔re-verify engine, fail-closed),
-  `internal/version`; `docs/`, `tools/` (incl. `pii_scan.sh`), `wiki/`.
-- **Build/dev:** `make build`; `make tools` installs `golangci-lint`, `gosec`,
-  `govulncheck`.
-
-## Tier note
-
-The routine tier runs on **local Devstral**. Keep changes small, focused, and
-verifier-friendly — narrow diffs, tests alongside, clear commit messages. Stay
-inside the declared P0 scope; if a change wants to reach past it (seccomp/cap/fs
-observation, multi-emitter, resource tuning), split it and let the review-loop
-weigh the expansion.
+- **You are the routine-tier producer only.** Author a focused change and open a
+  pull request. You do not review and you do not merge; the independent
+  adversarial review-loop owns everything after the PR is opened.
+- **Branch prefix:** this lane prefixes work branches **`openhands/…`** (the
+  Claude lane uses its own prefixes). Branch from `main`.
+- **Never push to `main`; never self-merge.** The PR-only credential enforces
+  this — treat a permission error there as correct behavior, not an obstacle to
+  route around.
+- **Work in a git worktree and get `make gate-full` green locally before opening
+  the PR.** Do not use CI as your iteration loop. Full sequence in `AGENTS.md`.
+- **Tier:** this lane runs on **local Devstral**. Keep changes small, focused,
+  and verifier-friendly — narrow diffs, tests alongside, clear commit messages.
+- **Stay inside P0 scope** (does-it-start convergence, one stateless image,
+  Compose output only). If a change reaches past it — seccomp/cap/fs
+  observation, multi-emitter, resource tuning — split it out and let the
+  review-loop weigh the expansion rather than quietly widening scope.
+- **Never downgrade a control to make convergence pass.** Fail closed and report
+  it; that behavior is the product, not a blocker to work around.
