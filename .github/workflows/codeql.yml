@@ -29,4 +29,10 @@ jobs:
       - name: Autobuild
         uses: github/codeql-action/autobuild@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
       - name: Analyze
+        # TEMPORARY (ratified decision): this repo is private without GitHub Advanced
+        # Security, so the code-scanning upload in this step fails with "Advanced
+        # Security must be enabled..." on every run. continue-on-error keeps that
+        # expected failure from blocking PRs while still surfacing it in the logs.
+        # REMOVE this line when the repo goes public / GHAS is enabled.
+        continue-on-error: true
         uses: github/codeql-action/analyze@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
