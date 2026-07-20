@@ -11,10 +11,16 @@ import (
 	"github.com/ranklancer/ecumene/internal/sandbox"
 )
 
-type fakeLauncher struct{ launches, stops int }
+type fakeLauncher struct {
+	launches, stops int
+	// specs records every RunSpec handed to Launch, in call order, so tests
+	// can assert what the sandbox was actually asked to verify.
+	specs []sandbox.RunSpec
+}
 
-func (f *fakeLauncher) Launch(_ context.Context, _ sandbox.RunSpec) (sandbox.Handle, error) {
+func (f *fakeLauncher) Launch(_ context.Context, spec sandbox.RunSpec) (sandbox.Handle, error) {
 	f.launches++
+	f.specs = append(f.specs, spec)
 	return sandbox.Handle{ID: "h"}, nil
 }
 func (f *fakeLauncher) Stop(_ context.Context, _ sandbox.Handle) error { f.stops++; return nil }
@@ -228,5 +234,99 @@ func TestConverge_MidLoopTraceInfraError_EmitsLastVerifiedCandidate(t *testing.T
 	// one whose Trace call failed.
 	if fl.stops != fl.launches {
 		t.Errorf("every launch must be stopped, even when Trace errors: launches=%d stops=%d", fl.launches, fl.stops)
+	}
+}
+
+// TestConverge_RunSpecMirrorsEmittedDoctrine pins the invariant raised in the
+// PR#5 Opus review: the RunSpec handed to the Launcher must mirror exactly
+// what emit.Harden would write for the same doctrine profile and
+// observation, so the sandbox launch verifies the config that will actually
+// ship. For the shipped reference profile, read-only-root-tmpfs and
+// cap-drop-all-min-add are both required, so the final iteration's RunSpec
+// must have ReadOnly==true and CapAdd/Tmpfs carrying exactly the observed
+// set -- the same set emit.Harden would put in cap_add/tmpfs.
+func TestConverge_RunSpecMirrorsEmittedDoctrine(t *testing.T) {
+	fl := &fakeLauncher{}
+	tr := &scriptedTracer{seq: []observe.Result{
+		{Started: true, Healthy: true, Caps: []string{"NET_BIND_SERVICE"}, WritePaths: []string{"/var/run/app"}},
+		{Started: true, Healthy: true, Caps: []string{"NET_BIND_SERVICE"}, WritePaths: []string{"/var/run/app"}},
+	}}
+	_, err := newLoop(fl, tr).Converge(context.Background(), "img")
+	if err != nil {
+		t.Fatalf("should converge: %v", err)
+	}
+	if len(fl.specs) != 2 {
+		t.Fatalf("expected 2 launches, got %d", len(fl.specs))
+	}
+	final := fl.specs[len(fl.specs)-1]
+	if !final.ReadOnly {
+		t.Error("RunSpec.ReadOnly must be true: the reference profile requires read-only-root-tmpfs, which is exactly the condition under which emit.Harden writes read_only: true -- a false here would mean the sandbox verified a WEAKER config than what ships")
+	}
+	if len(final.Tmpfs) != 1 || final.Tmpfs[0] != "/var/run/app" {
+		t.Errorf("RunSpec.Tmpfs must carry the observed write path emit.Harden would tmpfs-mount, got %v", final.Tmpfs)
+	}
+	if len(final.CapAdd) != 1 || final.CapAdd[0] != "NET_BIND_SERVICE" {
+		t.Errorf("RunSpec.CapAdd must carry the observed capability emit.Harden would cap_add, got %v", final.CapAdd)
+	}
+}
+
+// TestConverge_RunSpecOmitsUngatedFieldsWhenControlNotRequired proves the
+// RunSpec derives ReadOnly/Tmpfs/CapAdd from the SAME doctrine.Profile
+// predicate emit.Harden uses (p.Required("read-only-root-tmpfs") and
+// p.Required("cap-drop-all-min-add")) rather than hardcoding them on. With a
+// profile where those two controls are explicitly "off", emit.Harden would
+// leave ReadOnly=false and Tmpfs/CapAdd nil (see internal/emit/emit.go); the
+// RunSpec handed to the Launcher must match, or the sandbox would verify a
+// STRICTER environment than the one that ships -- also a divergence from
+// "verifies the config that ships", just in the safe direction. If a future
+// change re-hardcodes ReadOnly: true or unconditionally forwards
+// caps/writes regardless of the profile, this test fails.
+func TestConverge_RunSpecOmitsUngatedFieldsWhenControlNotRequired(t *testing.T) {
+	raw := []byte(`
+name: no-ro-no-cap
+version: v1
+controls:
+  no-new-privileges:      { status: required, kind: static }
+  cap-drop-all-min-add:   { status: off, kind: observation }
+  read-only-root-tmpfs:   { status: off, kind: observation }
+  no-privileged:          { status: required, kind: static }
+  no-docker-socket:       { status: required, kind: static }
+  minimal-ro-mounts:      { status: required, kind: observation }
+  secrets-by-reference:   { status: required, kind: static }
+  restart-unless-stopped: { status: required, kind: static }
+  lan-bound-ports:        { status: required, kind: static }
+  resource-limits:        { status: warn, kind: observation }
+  log-driver-limits:      { status: required, kind: static }
+  healthchecks:           { status: required, kind: static }
+  pin-image-digest:       { status: required, kind: static }
+  dedicated-bridge-net:   { status: required, kind: static }
+`)
+	p, err := doctrine.Load(raw)
+	if err != nil {
+		t.Fatalf("load profile: %v", err)
+	}
+
+	fl := &fakeLauncher{}
+	tr := &scriptedTracer{seq: []observe.Result{
+		{Started: true, Healthy: true, Caps: []string{"NET_BIND_SERVICE"}, WritePaths: []string{"/var/run/app"}},
+		{Started: true, Healthy: true, Caps: []string{"NET_BIND_SERVICE"}, WritePaths: []string{"/var/run/app"}},
+	}}
+	loop := Loop{Launcher: fl, Tracer: tr, Profile: p, Service: "app", MaxIter: 5}
+	_, err = loop.Converge(context.Background(), "img")
+	if err != nil {
+		t.Fatalf("should converge: %v", err)
+	}
+	if len(fl.specs) == 0 {
+		t.Fatal("expected at least one launch")
+	}
+	final := fl.specs[len(fl.specs)-1]
+	if final.ReadOnly {
+		t.Error("RunSpec.ReadOnly must be false: read-only-root-tmpfs is not required by this profile, so emit.Harden would never write read_only: true for this candidate")
+	}
+	if len(final.Tmpfs) != 0 {
+		t.Errorf("RunSpec.Tmpfs must be empty: emit.Harden only sets tmpfs inside its read-only-root-tmpfs required branch, got %v", final.Tmpfs)
+	}
+	if len(final.CapAdd) != 0 {
+		t.Errorf("RunSpec.CapAdd must be empty: emit.Harden only sets cap_add inside its cap-drop-all-min-add required branch, got %v", final.CapAdd)
 	}
 }
