@@ -29,6 +29,9 @@ type Service struct {
 	CapDrop     []string     `yaml:"cap_drop,omitempty"`
 	CapAdd      []string     `yaml:"cap_add,omitempty"`
 	Tmpfs       []string     `yaml:"tmpfs,omitempty"`
+	User        string       `yaml:"user,omitempty"`
+	MemLimit    string       `yaml:"mem_limit,omitempty"`
+	NetworkMode string       `yaml:"network_mode,omitempty"`
 	Networks    []string     `yaml:"networks,omitempty"`
 	Logging     *Logging     `yaml:"logging,omitempty"`
 	HealthCheck *HealthCheck `yaml:"healthcheck,omitempty"`
@@ -69,6 +72,12 @@ type Evidence struct {
 // A required observation-derived control with no observation yet keeps the
 // safest value (cap_drop ALL with no add; read-only with no tmpfs) — fail-closed,
 // never loosened.
+//
+// non-root-user, memory-limit and network-mode (controls 15-17) are the SAME
+// controls internal/sandbox (via internal/converge) derives its launch axes
+// from — see doctrine.Profile.NetworkMode and the doctrine.NonRootUser /
+// doctrine.MemoryLimit constants — so the sandbox verifies exactly what this
+// function ships.
 func Harden(serviceName, image string, p doctrine.Profile, obs observe.Result) (Compose, Evidence, error) {
 	if serviceName == "" || image == "" {
 		return Compose{}, Evidence{}, fmt.Errorf("emit: service name and image are required")
@@ -107,9 +116,44 @@ func Harden(serviceName, image string, p doctrine.Profile, obs observe.Result) (
 		svc.HealthCheck = &HealthCheck{Test: []string{"CMD-SHELL", "exit 0"}, Interval: "30s", Timeout: "5s", Retries: 3}
 		mark("healthchecks", true, "static shape; liveness confirmed by convergence")
 	}
+	if p.Required("non-root-user") {
+		svc.User = doctrine.NonRootUser
+		mark("non-root-user", true, "static")
+	}
+	if p.Required("memory-limit") {
+		svc.MemLimit = doctrine.MemoryLimit
+		mark("memory-limit", true, "static")
+	}
+
+	// network-mode (control 17) decides the per-profile serve axis:
+	//   - required, value "serve": this service must be reachable — leave
+	//     network_mode unset (normal compose networking applies) and let
+	//     dedicated-bridge-net (control 14) assign it a bridge network below.
+	//   - required, value "none" (or absent value): batch/one-shot — force
+	//     network_mode: none. Compose forbids combining network_mode with
+	//     networks:, so dedicated-bridge-net is suppressed for this service
+	//     when isolated (recorded, not silently dropped).
+	//   - not required at all: unchanged, pre-existing behaviour — only
+	//     dedicated-bridge-net governs networking (back-compat for profiles
+	//     that predate this control).
+	netMode := p.NetworkMode()
+	networkModeRequired := p.Required("network-mode")
+	isolated := networkModeRequired && netMode == "none"
+	if networkModeRequired {
+		if netMode == "serve" {
+			mark("network-mode", true, "static: profile declares this service serves — network reachable")
+		} else {
+			svc.NetworkMode = "none"
+			mark("network-mode", true, "static: batch/one-shot profile — fully network-isolated")
+		}
+	}
 	if p.Required("dedicated-bridge-net") {
-		svc.Networks = []string{netName}
-		mark("dedicated-bridge-net", true, "static")
+		if isolated {
+			mark("dedicated-bridge-net", false, "suppressed: network-mode is none (network_mode and networks are mutually exclusive in compose)")
+		} else {
+			svc.Networks = []string{netName}
+			mark("dedicated-bridge-net", true, "static")
+		}
 	}
 
 	c := Compose{Services: map[string]Service{serviceName: svc}}

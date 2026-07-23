@@ -15,11 +15,25 @@ import (
 // RunSpec is one ephemeral run request. The image is untrusted; the runtime
 // must isolate the network, refuse a host Docker socket, and mount nothing
 // persistent from the host.
+//
+// User, Memory and Network are per-profile axes: the caller (internal/converge)
+// derives them from the SAME doctrine.Profile predicates/values that
+// internal/emit.Harden uses (doctrine.Profile.Required("non-root-user"),
+// Required("memory-limit"), and Profile.NetworkMode()), so the sandbox launch
+// verifies exactly what the emitted compose ships on every axis. An empty
+// User/Memory means the corresponding control is not required by the active
+// profile — buildRunArgs omits the flag rather than substituting a hidden
+// default, so the launcher never diverges from what emit.Harden would write
+// for the same profile. Network is fail-closed: any value other than "serve"
+// (including empty/absent) launches fully isolated (--network none).
 type RunSpec struct {
 	Image      string
 	CapAdd     []string      // capabilities granted for this run (tighten narrows)
 	ReadOnly   bool          // read-only root filesystem
 	Tmpfs      []string      // writable tmpfs paths
+	User       string        // UID:GID to run as; empty omits --user entirely
+	Memory     string        // memory ceiling (e.g. "256m"); empty omits --memory entirely
+	Network    string        // "serve" joins a reachable network; anything else is isolated (--network none)
 	SoakWindow time.Duration // how long to let the container run before judging
 }
 

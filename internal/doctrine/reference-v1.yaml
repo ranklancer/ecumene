@@ -1,10 +1,17 @@
 # reference/v1 — Ecumene's shipped hardening doctrine (the internal design spec).
-# The 14-point compose-hardening reference set. Each control is either
-# `static` (policy fully determines the emitted value) or `observation`
-# (policy declares intent; the convergence loop fills the concrete value,
-# then policy validates it). Absent an operator profile, Ecumene uses this
-# at `required` for every control — a control is never silently downgraded
-# to `off` without an explicit, recorded exception (fail-closed).
+# The 14-point compose-hardening reference set, plus three controls (15-17)
+# that close the A3 sandbox fidelity gap: the sandbox Launcher used to
+# hardcode --user/--memory/--network regardless of doctrine, so a PASS did
+# not certify what the emitter actually shipped. Pushing these into the
+# doctrine lets internal/emit and internal/sandbox (via internal/converge)
+# derive the SAME values from the SAME profile.
+#
+# Each control is either `static` (policy fully determines the emitted
+# value) or `observation` (policy declares intent; the convergence loop
+# fills the concrete value, then policy validates it). Absent an operator
+# profile, Ecumene uses this at `required` for every control — a control is
+# never silently downgraded to `off` without an explicit, recorded exception
+# (fail-closed).
 name: reference
 version: v1
 controls:
@@ -22,3 +29,6 @@ controls:
   healthchecks:           { status: required, kind: static }        # 12
   pin-image-digest:       { status: required, kind: static }        # 13
   dedicated-bridge-net:   { status: required, kind: static }        # 14
+  non-root-user:           { status: required, kind: static }                   # 15 (sandbox fidelity: run-as-user)
+  memory-limit:            { status: required, kind: static }                   # 16 (sandbox fidelity: memory ceiling)
+  network-mode:            { status: required, kind: static, value: none }      # 17 (sandbox fidelity: per-profile serve axis; batch/one-shot default — a profile for a service that must listen sets value: serve)
