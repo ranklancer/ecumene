@@ -2,10 +2,21 @@
 // (the internal design spec component A3). It shells out to a container runtime (podman
 // preferred for rootless operation, docker as a fallback) via an injected
 // CmdRunner so the launcher is unit-testable without a real runtime on
-// PATH. The `run` argv it builds mirrors the SAME 14-point hardening
-// doctrine (internal/doctrine/reference-v1.yaml) that internal/emit applies
-// to generated compose files, so "does the candidate start" genuinely
+// PATH. The `run` argv it builds mirrors the SAME hardening doctrine
+// (internal/doctrine/reference-v1.yaml) that internal/emit applies to
+// generated compose files, so "does the candidate start" genuinely
 // verifies the hardened configuration and not some looser stand-in.
+//
+// User, memory and network used to be hardcoded here regardless of
+// doctrine — stricter than (and sometimes disagreeing with) what the
+// emitter actually shipped, which could over-reject a candidate the
+// emitted compose would have run fine (e.g. a port-serving service can't
+// be reached under a hardcoded --network none; a heavier image OOMs at a
+// hardcoded 256m). Those axes are now carried on RunSpec, derived
+// per-profile by internal/converge from the SAME doctrine.Profile
+// predicates emit.Harden gates on — see sandbox.go's RunSpec doc comment.
+// buildRunArgs itself does no policy derivation: it only translates
+// whatever RunSpec it is handed into argv.
 //
 // eBPF / the Tracer (A4 / D-5) are explicitly out of scope here; they
 // remain a seam for a follow-up change.
@@ -19,17 +30,14 @@ import (
 	"strings"
 )
 
-// Hardened defaults applied to every launch, independent of RunSpec. These
-// mirror doctrine intent even where the doctrine profile marks the
-// analogous compose control advisory rather than required (see
-// resource-limits, doctrine control #10, status "warn"): a sandbox launch
-// is a security boundary for untrusted candidate images, so it always gets
-// the tightest defaults rather than inheriting a "warn" downgrade.
-const (
-	defaultUser   = "65534:65534" // non-root (nobody:nobody) default
-	defaultMemory = "256m"
-	defaultPids   = "256"
-)
+// defaultPids is a fail-closed process-count ceiling applied to every
+// launch, independent of RunSpec or doctrine. Unlike user/memory/network,
+// it has no corresponding doctrine control or emitted compose field: it is
+// deliberately extra-only sandbox strictness (defence in depth for an
+// untrusted candidate image) that does not over-reject typical
+// single-process workloads, so it stays unconditional like cap-drop ALL
+// and no-new-privileges below.
+const defaultPids = "256"
 
 // CmdRunner runs an external command and captures its output. It is the
 // injection seam that lets execLauncher be unit-tested without a real
@@ -94,16 +102,23 @@ func NewExecLauncher(runner CmdRunner, runtime string) *execLauncher {
 // buildRunArgs constructs the hardened `run` argv for spec. It mirrors the
 // doctrine internal/emit applies to compose:
 //
-//   - --security-opt no-new-privileges:true   (doctrine #1, always)
-//   - --cap-drop ALL                          (doctrine #2, always)
+//   - --security-opt no-new-privileges:true   (doctrine #1, always —
+//     unconditional regardless of profile, defence in depth)
+//   - --cap-drop ALL                          (doctrine #2 baseline,
+//     always — unconditional regardless of profile, defence in depth)
 //   - --cap-add <c> for each spec.CapAdd       (doctrine #2, minimal add;
 //     empty CapAdd emits no --cap-add at all — fail-closed tightest)
 //   - --read-only                             (doctrine #3, when spec.ReadOnly)
 //   - --tmpfs <p> for each spec.Tmpfs entry    (doctrine #3)
-//   - --user <non-root uid:gid>                (non-root default)
-//   - --network none                            (RunSpec has no network
-//     field, so the fail-closed default is fully isolated)
-//   - --memory / --pids-limit                  (hardened resource defaults)
+//   - --user <spec.User>                       (doctrine #15, only when
+//     spec.User is set — mirrors emit's non-root-user gate)
+//   - --memory <spec.Memory>                    (doctrine #16, only when
+//     spec.Memory is set — mirrors emit's memory-limit gate)
+//   - --pids-limit                              (fail-closed process
+//     ceiling, always — see defaultPids doc comment)
+//   - --network bridge | none                  (doctrine #17: "serve"
+//     joins a reachable network; anything else is fully isolated — mirrors
+//     emit's network-mode gate)
 //   - --rm, -d                                  (so Stop can tear down by ID)
 //
 // The image is always the last argv element, and every value — including
@@ -138,12 +153,19 @@ func buildRunArgs(spec RunSpec) ([]string, error) {
 		args = append(args, "--tmpfs", p)
 	}
 
-	args = append(args,
-		"--user", defaultUser,
-		"--network", "none",
-		"--memory", defaultMemory,
-		"--pids-limit", defaultPids,
-	)
+	if spec.User != "" {
+		args = append(args, "--user", spec.User)
+	}
+	if spec.Memory != "" {
+		args = append(args, "--memory", spec.Memory)
+	}
+	args = append(args, "--pids-limit", defaultPids)
+
+	if spec.Network == "serve" {
+		args = append(args, "--network", "bridge")
+	} else {
+		args = append(args, "--network", "none")
+	}
 
 	args = append(args, spec.Image)
 	return args, nil

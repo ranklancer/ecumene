@@ -79,6 +79,35 @@ func (l Loop) Converge(ctx context.Context, image string) (Result, error) {
 	// completed start+healthy cycle (PR#1 Opus review, fail-closed hardening).
 	var lastVerified Result
 
+	// The RunSpec handed to the Launcher must mirror exactly what emit.Harden
+	// just wrote for this candidate. emit only ever sets ReadOnly/Tmpfs
+	// inside its `if p.Required("read-only-root-tmpfs")` branch, only ever
+	// sets CapAdd inside its `if p.Required("cap-drop-all-min-add")` branch,
+	// and, since the sandbox-fidelity change, only ever sets User/MemLimit/
+	// NetworkMode inside its non-root-user / memory-limit / network-mode
+	// branches (see internal/emit/emit.go). If the RunSpec used a looser gate
+	// here -- e.g. unconditionally forwarding caps/writes, or hardcoding
+	// ReadOnly/User/Memory/Network -- the sandbox could verify a candidate
+	// under different (potentially weaker, or needlessly stricter)
+	// conditions than the compose that actually ships, which is exactly the
+	// fail-closed violation flagged in the PR#5 Opus review. Deriving every
+	// axis from the SAME doctrine.Profile predicates/values emit uses
+	// (rather than a duplicated rule) keeps the two permanently in sync.
+	readOnly := l.Profile.Required("read-only-root-tmpfs")
+	capAddRequired := l.Profile.Required("cap-drop-all-min-add")
+	user := ""
+	if l.Profile.Required("non-root-user") {
+		user = doctrine.NonRootUser
+	}
+	memory := ""
+	if l.Profile.Required("memory-limit") {
+		memory = doctrine.MemoryLimit
+	}
+	network := "none"
+	if l.Profile.NetworkMode() == "serve" {
+		network = "serve"
+	}
+
 	for i := 1; i <= maxIter; i++ {
 		obs := observe.Result{Caps: caps, WritePaths: writes}
 		c, ev, err := emit.Harden(svc, image, l.Profile, obs)
@@ -91,31 +120,18 @@ func (l Loop) Converge(ctx context.Context, image string) (Result, error) {
 		}
 		last = Result{Compose: rendered, Evidence: ev, Iterations: i}
 
-		// The RunSpec handed to the Launcher must mirror exactly what
-		// emit.Harden just wrote for this candidate: emit only ever sets
-		// ReadOnly/Tmpfs inside its `if p.Required("read-only-root-tmpfs")`
-		// branch, and only ever sets CapAdd inside its
-		// `if p.Required("cap-drop-all-min-add")` branch (see
-		// internal/emit/emit.go). If the RunSpec used a looser gate here --
-		// e.g. unconditionally forwarding caps/writes, or hardcoding
-		// ReadOnly -- the sandbox could verify a candidate under different
-		// (potentially weaker) conditions than the compose that actually
-		// ships, which is exactly the fail-closed violation flagged in the
-		// PR#5 Opus review. Deriving from the SAME doctrine.Profile.Required
-		// predicate emit uses (rather than a duplicated rule) keeps the two
-		// permanently in sync.
-		readOnly := l.Profile.Required("read-only-root-tmpfs")
 		tmpfs := writes
 		if !readOnly {
 			tmpfs = nil
 		}
 		capAdd := caps
-		if !l.Profile.Required("cap-drop-all-min-add") {
+		if !capAddRequired {
 			capAdd = nil
 		}
 
 		h, err := l.Launcher.Launch(ctx, sandbox.RunSpec{
-			Image: image, CapAdd: capAdd, ReadOnly: readOnly, Tmpfs: tmpfs, SoakWindow: soak,
+			Image: image, CapAdd: capAdd, ReadOnly: readOnly, Tmpfs: tmpfs,
+			User: user, Memory: memory, Network: network, SoakWindow: soak,
 		})
 		if err != nil {
 			// Infra error before this candidate ever launched: emit the last

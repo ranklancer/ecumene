@@ -56,14 +56,19 @@ func containsFlag(args []string, flag string) bool {
 }
 
 // TestBuildRunArgs_HardenedDefaults asserts the EXACT argv built for a
-// representative RunSpec. This test fails if any hardening flag is dropped
-// or reordered, or if an undeclared capability sneaks in.
+// representative RunSpec whose User/Memory/Network are set (as
+// internal/converge would set them for a profile requiring non-root-user,
+// memory-limit and network-mode: serve). This test fails if any hardening
+// flag is dropped or reordered, or if an undeclared capability sneaks in.
 func TestBuildRunArgs_HardenedDefaults(t *testing.T) {
 	spec := RunSpec{
 		Image:    "example.com/app:1.2.3",
 		CapAdd:   []string{"NET_BIND_SERVICE", "CHOWN"},
 		ReadOnly: true,
 		Tmpfs:    []string{"/tmp", "/run"},
+		User:     "65534:65534",
+		Memory:   "256m",
+		Network:  "serve",
 	}
 	got, err := buildRunArgs(spec)
 	if err != nil {
@@ -78,10 +83,10 @@ func TestBuildRunArgs_HardenedDefaults(t *testing.T) {
 		"--read-only",
 		"--tmpfs", "/tmp",
 		"--tmpfs", "/run",
-		"--user", defaultUser,
-		"--network", "none",
-		"--memory", defaultMemory,
+		"--user", "65534:65534",
+		"--memory", "256m",
 		"--pids-limit", defaultPids,
+		"--network", "bridge",
 		"example.com/app:1.2.3",
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -138,7 +143,8 @@ func TestBuildRunArgs_UndeclaredCap_NeverAdded(t *testing.T) {
 
 // TestBuildRunArgs_ReadOnlyFalse_StillHardened proves the ReadOnly=false
 // path never produces a fully-unhardened launch: cap-drop ALL and
-// no-new-privileges remain even without --read-only.
+// no-new-privileges remain even without --read-only, and an empty
+// RunSpec (no profile axes set) still fails closed to --network none.
 func TestBuildRunArgs_ReadOnlyFalse_StillHardened(t *testing.T) {
 	spec := RunSpec{Image: "example.com/app:1.0", ReadOnly: false}
 	got, err := buildRunArgs(spec)
@@ -156,6 +162,63 @@ func TestBuildRunArgs_ReadOnlyFalse_StillHardened(t *testing.T) {
 	}
 	if !containsSeq(got, "--network", "none") {
 		t.Fatalf("expected --network none even when ReadOnly=false, got argv: %#v", got)
+	}
+}
+
+// TestBuildRunArgs_EmptyUserAndMemory_OmitsFlags proves the empty-string
+// fail-closed default for User/Memory: buildRunArgs performs no policy
+// substitution of its own — an empty RunSpec.User/Memory (meaning the
+// active profile did not require non-root-user/memory-limit) must produce
+// argv with NO --user/--memory flag at all, exactly matching what
+// emit.Harden would have left unset in the compose for the same profile.
+func TestBuildRunArgs_EmptyUserAndMemory_OmitsFlags(t *testing.T) {
+	spec := RunSpec{Image: "example.com/app:1.0"}
+	got, err := buildRunArgs(spec)
+	if err != nil {
+		t.Fatalf("buildRunArgs: unexpected error: %v", err)
+	}
+	if containsFlag(got, "--user") {
+		t.Fatalf("expected no --user when RunSpec.User is empty, got argv: %#v", got)
+	}
+	if containsFlag(got, "--memory") {
+		t.Fatalf("expected no --memory when RunSpec.Memory is empty, got argv: %#v", got)
+	}
+	if !containsSeq(got, "--pids-limit", defaultPids) {
+		t.Fatalf("expected --pids-limit always present (unconditional, defence in depth), got argv: %#v", got)
+	}
+}
+
+// TestBuildRunArgs_NetworkServe_JoinsBridge_NotNone proves the core fix
+// this change makes: a profile that declares this service serves must NOT
+// get --network none (which would make a port-serving candidate
+// unreachable and cause a false FAIL). It must join a reachable network.
+func TestBuildRunArgs_NetworkServe_JoinsBridge_NotNone(t *testing.T) {
+	spec := RunSpec{Image: "example.com/app:1.0", Network: "serve"}
+	got, err := buildRunArgs(spec)
+	if err != nil {
+		t.Fatalf("buildRunArgs: unexpected error: %v", err)
+	}
+	if containsSeq(got, "--network", "none") {
+		t.Fatalf("a serving profile must NOT get --network none, got argv: %#v", got)
+	}
+	if !containsSeq(got, "--network", "bridge") {
+		t.Fatalf("a serving profile must get --network bridge, got argv: %#v", got)
+	}
+}
+
+// TestBuildRunArgs_NetworkNotServe_IsolatesToNone proves every non-"serve"
+// value (including empty/absent, and an explicit "none") fails closed to
+// full isolation -- the batch/one-shot default.
+func TestBuildRunArgs_NetworkNotServe_IsolatesToNone(t *testing.T) {
+	for _, network := range []string{"", "none", "bogus"} {
+		spec := RunSpec{Image: "example.com/app:1.0", Network: network}
+		got, err := buildRunArgs(spec)
+		if err != nil {
+			t.Fatalf("buildRunArgs: unexpected error: %v", err)
+		}
+		if !containsSeq(got, "--network", "none") {
+			t.Fatalf("Network=%q must isolate to --network none, got argv: %#v", network, got)
+		}
 	}
 }
 
@@ -188,6 +251,9 @@ func TestBuildRunArgs_ImageAlwaysLast(t *testing.T) {
 		CapAdd:   []string{"CHOWN"},
 		ReadOnly: true,
 		Tmpfs:    []string{"/tmp"},
+		User:     "65534:65534",
+		Memory:   "256m",
+		Network:  "serve",
 	}
 	got, err := buildRunArgs(spec)
 	if err != nil {

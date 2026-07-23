@@ -44,10 +44,30 @@ const (
 	KindObservation Kind = "observation"
 )
 
-// Control is one doctrine control.
+// Sandbox/compose hardened values for the static per-profile controls
+// non-root-user and memory-limit (added alongside network-mode to close the
+// A3 sandbox fidelity gap: the launcher used to hardcode these regardless of
+// doctrine). internal/emit and internal/sandbox (via internal/converge) both
+// derive from these SAME constants — never duplicated as separate literals —
+// so a compose service and its sandbox verification agree exactly on the
+// run-as user and memory ceiling whenever the corresponding control is
+// required.
+const (
+	// NonRootUser is the UID:GID applied when the "non-root-user" control is
+	// required (nobody:nobody).
+	NonRootUser = "65534:65534"
+	// MemoryLimit is the memory ceiling applied when the "memory-limit"
+	// control is required.
+	MemoryLimit = "256m"
+)
+
+// Control is one doctrine control. Value is an optional, control-specific
+// parameter; today only the "network-mode" control interprets it (see
+// Profile.NetworkMode).
 type Control struct {
 	Status Status `yaml:"status"`
 	Kind   Kind   `yaml:"kind"`
+	Value  string `yaml:"value,omitempty"`
 }
 
 // Profile is a versioned hardening doctrine: a named, versioned set of controls.
@@ -82,7 +102,7 @@ func Load(raw []byte) (Profile, error) {
 		return Profile{}, ErrEmptyProfile
 	}
 	for name, c := range p.Controls {
-		if err := c.validate(); err != nil {
+		if err := c.validate(name); err != nil {
 			return Profile{}, fmt.Errorf("doctrine: control %q: %w", name, err)
 		}
 	}
@@ -99,7 +119,7 @@ func parse(raw []byte) (Profile, error) {
 	return p, nil
 }
 
-func (c Control) validate() error {
+func (c Control) validate(name string) error {
 	switch c.Status {
 	case StatusRequired, StatusWarn, StatusOff:
 	default:
@@ -110,6 +130,18 @@ func (c Control) validate() error {
 	default:
 		return fmt.Errorf("invalid kind %q (want static|observation)", c.Kind)
 	}
+	// Value is a control-specific parameter; only "network-mode" interprets
+	// it today. Rejecting it elsewhere keeps a typo'd/misplaced value from
+	// being silently ignored on a control that never reads it.
+	if name == "network-mode" {
+		switch c.Value {
+		case "", "none", "serve":
+		default:
+			return fmt.Errorf("invalid value %q (want none|serve)", c.Value)
+		}
+	} else if c.Value != "" {
+		return fmt.Errorf("value is only valid on the network-mode control")
+	}
 	return nil
 }
 
@@ -117,4 +149,24 @@ func (c Control) validate() error {
 func (p Profile) Required(name string) bool {
 	c, ok := p.Controls[name]
 	return ok && c.Status == StatusRequired
+}
+
+// NetworkMode returns the doctrine-mandated network axis for the
+// "network-mode" control: "serve" only when the control is required AND
+// explicitly declares value: serve — a profile stating this service must
+// listen/be reachable, so it gets a network. Every other case — the control
+// absent, off, warn, or required with an empty/unrecognised value — resolves
+// to "none", the fail-closed default (fully isolated, batch/one-shot shape,
+// matching the sandbox's historical hardcoded default). An absent or
+// omitted control must never widen network exposure.
+//
+// internal/emit and internal/sandbox (via internal/converge) both call this
+// SAME method — never a duplicated rule — so the emitted compose and the
+// sandbox launch agree on the network axis exactly.
+func (p Profile) NetworkMode() string {
+	c, ok := p.Controls["network-mode"]
+	if !ok || c.Status != StatusRequired || c.Value != "serve" {
+		return "none"
+	}
+	return "serve"
 }
