@@ -3,12 +3,11 @@
 # One glob or path per line (matched against the path exactly as returned
 # by `git ls-files`, i.e. repo-root-relative). Lines starting with '#' and
 # blank lines are ignored. Files/paths matching an entry here are exempt
-# from the "sanitization" workflow's internal-disclosure scan (Check 2:
-# homelab.com subdomains, 192.168.1.x homelab subnet addresses).
+# from the "sanitization" workflow's internal-disclosure scan (the internal
+# homelab domain and 192.168.1.x homelab subnet addresses).
 #
 # Default posture is fail-closed: a file NOT listed here that contains a
 # real internal identifier will fail CI. Only add an entry if the match is
-# a legitimate false positive (e.g. doctrine text explaining what NOT to
-# leak) -- never to launder an actual leak to green.
+# a legitimate false positive -- never to launder an actual leak to green.
 #
 # No entries yet.
