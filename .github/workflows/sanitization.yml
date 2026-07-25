@@ -76,7 +76,7 @@ jobs:
           [ "$bad" -eq 0 ] || { echo "::error::commit-identity check FAILED -- see offending commit(s)/field(s)/email(s) above" >&2; exit 1; }
           echo "commit-identity: OK (all commits in range use @users.noreply.github.com or noreply@github.com for both author and committer)"
 
-      - name: Internal disclosure scan (homelab.com / 192.168.1.x subnet)
+      - name: Internal disclosure scan (homelab domain / 192.168.1.x subnet)
         run: |
           set -euo pipefail
           allowlist=".sanitization-allowlist"
@@ -150,11 +150,14 @@ jobs:
             done < <(git ls-files)
           }
 
-          scan_pattern 'homelab\.com' 'homelab.com subdomain'
+          # Internal domain needle assembled from fragments at runtime so the
+          # cleartext literal is never committed to this public-bound repo.
+          dom_re="$(printf 'cmViaGFobm9taWNvbg==' | base64 -d)\.com"
+          scan_pattern "$dom_re" 'internal homelab domain'
           scan_pattern '192\.168\.1\.[0-9]{1,3}' '192.168.1.x homelab subnet address'
 
           [ "$fail" -eq 0 ] || { echo "::error::internal-disclosure scan FAILED -- see file(s)/line(s)/pattern(s) above" >&2; exit 1; }
-          echo "internal-disclosure: OK (no homelab.com / 192.168.1.x found in tracked files)"
+          echo "internal-disclosure: OK"
 
       - name: Secret scan (gitleaks; must fail loud, never false-green)
         run: |
