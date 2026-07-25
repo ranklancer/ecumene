@@ -4,7 +4,7 @@
 # by `git ls-files`, i.e. repo-root-relative). Lines starting with '#' and
 # blank lines are ignored. Files/paths matching an entry here are exempt
 # from the "sanitization" workflow's internal-disclosure scan (Check 2:
-# homelab.com subdomains, 192.168.1.x homelab subnet addresses).
+# the internal homelab domain subdomains, 192.168.1.x homelab subnet addresses).
 #
 # Default posture is fail-closed: a file NOT listed here that contains a
 # real internal identifier will fail CI. Only add an entry if the match is
