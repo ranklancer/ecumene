@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo-dark.svg" alt="Ecumene — the Domain (Forerunner mark)" width="200" height="200">
+</p>
+
 # Ecumene
 
 **Observation-driven hardened-deployment generator** — the *forge* in the suite:
