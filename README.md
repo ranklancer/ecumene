@@ -56,4 +56,6 @@ keyless cosign; OpenSSF Scorecard + SLSA provenance staged in CI.
 
 ## License
 
-MIT. Public-repo hygiene: no host IPs, no secrets, no PII in code, fixtures, or docs.
+GNU Affero General Public License, version 3.0 only ([AGPL-3.0-only](LICENSE)); a commercial dual-license is available — see [`NOTICE`](NOTICE). Copyright (C) 2026 ranklancer.
+
+Public-repo hygiene: no host IPs, no secrets, no PII in code, fixtures, or docs.
