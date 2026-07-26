@@ -1,5 +1,10 @@
 # Ecumene
 
+[![CI](https://github.com/ranklancer/ecumene/actions/workflows/ci.yml/badge.svg)](https://github.com/ranklancer/ecumene/actions/workflows/ci.yml)
+[![Secret scan](https://github.com/ranklancer/ecumene/actions/workflows/sanitization.yml/badge.svg)](https://github.com/ranklancer/ecumene/actions/workflows/sanitization.yml)
+[![Go 1.22](https://img.shields.io/badge/go-1.22-00ADD8.svg)](go.mod)
+[![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
+
 **Observation-driven hardened-deployment generator** — the *forge* in the suite:
 **forge (Ecumene) → verify ([bulwark](https://github.com/ranklancer/bulwark)) → act ([juridical](https://github.com/ranklancer/juridical))**.
 
