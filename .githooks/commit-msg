@@ -1,0 +1,23 @@
+#!/bin/sh
+# commit-msg — block internal doc refs (PRD page ids, §/seam, BookStack) from
+# leaking into commit messages. Installed via `core.hooksPath`. See skill
+# github-machine-account-transport -> references/commit-message-leak-prevention.md
+#
+# Leak family (case-insensitive):
+#   (p655 §4)   (p842 finding #5)   p655 / p1021   seam 6   §4   PRD   BookStack
+#
+# Exit 1 aborts the commit and prints the offending line(s).
+
+msg_file="$1"
+[ -n "$msg_file" ] || exit 0
+
+pattern='\(p[0-9]+([[:space:]]*§[[:space:]]*[0-9]+)?\)|(^|[^a-z0-9])p[0-9]{3,}([^a-z0-9]|$)|(^|[^a-z])seam[[:space:]]*#?[0-9]|§[[:space:]]*[0-9]|(^|[^a-z])bookstack([^a-z]|$)|(^|[^a-z])prd([^a-z]|$)'
+
+hits="$(grep -nEi "$pattern" "$msg_file" 2>/dev/null || true)"
+if [ -n "$hits" ]; then
+    echo "commit-msg: BLOCKED — internal doc ref in message (pNNN / §N / seam N / PRD / BookStack)" >&2
+    printf '%s\n' "$hits" >&2
+    echo "commit-msg: strip the ref and retry." >&2
+    exit 1
+fi
+exit 0
